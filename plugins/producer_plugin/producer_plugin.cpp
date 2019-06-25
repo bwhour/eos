@@ -3,7 +3,6 @@
  *  @copyright defined in eos/LICENSE
  */
 #include <eosio/producer_plugin/producer_plugin.hpp>
-#include <eosio/chain/producer_object.hpp>
 #include <eosio/chain/plugin_interface.hpp>
 #include <eosio/chain/global_property_object.hpp>
 #include <eosio/chain/generated_transaction_object.hpp>
@@ -1494,7 +1493,7 @@ producer_plugin_impl::start_block_result producer_plugin_impl::start_block() {
 
                   if( preprocess_deadline <= fc::time_point::now() ) exhausted = true;
                   if( exhausted ) break;
-                  const auto& trx = itr->second;
+                  const transaction_metadata_ptr trx = itr->second;
                   auto category = calculate_transaction_category(trx);
                   if (category == tx_category::EXPIRED ||
                      (category == tx_category::UNEXPIRED_UNPERSISTED && _producers.empty()))

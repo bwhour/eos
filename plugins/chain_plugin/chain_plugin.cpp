@@ -7,7 +7,6 @@
 #include <eosio/chain/block_log.hpp>
 #include <eosio/chain/exceptions.hpp>
 #include <eosio/chain/authorization_manager.hpp>
-#include <eosio/chain/producer_object.hpp>
 #include <eosio/chain/code_object.hpp>
 #include <eosio/chain/config.hpp>
 #include <eosio/chain/wasm_interface.hpp>
@@ -381,7 +380,7 @@ protocol_feature_set initialize_protocol_features( const fc::path& p, bool popul
       );
    } else {
       if( populate_missing_builtins )
-         bfs::create_directory( p );
+         bfs::create_directories( p );
       else
          directory_exists = false;
    }

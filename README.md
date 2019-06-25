@@ -44,13 +44,13 @@ $ brew remove eosio
 
 #### Ubuntu 18.04 Package Install
 ```sh
-$ wget https://github.com/eosio/eos/releases/download/v1.8.0-rc1/eosio_1.8.0-rc1-ubuntu-18.04_amd64.deb
-$ sudo apt install ./eosio_1.8.0-rc1-ubuntu-18.04_amd64.deb
+$ wget https://github.com/eosio/eos/releases/download/v1.8.0-rc2/eosio_1.8.0-rc2-ubuntu-18.04_amd64.deb
+$ sudo apt install ./eosio_1.8.0-rc2-ubuntu-18.04_amd64.deb
 ```
 #### Ubuntu 16.04 Package Install
 ```sh
-$ wget https://github.com/eosio/eos/releases/download/v1.8.0-rc1/eosio_1.8.0-rc1-ubuntu-16.04_amd64.deb
-$ sudo apt install ./eosio_1.8.0-rc1-ubuntu-16.04_amd64.deb
+$ wget https://github.com/eosio/eos/releases/download/v1.8.0-rc2/eosio_1.8.0-rc2-ubuntu-16.04_amd64.deb
+$ sudo apt install ./eosio_1.8.0-rc2-ubuntu-16.04_amd64.deb
 ```
 #### Ubuntu Package Uninstall
 ```sh
@@ -58,8 +58,8 @@ $ sudo apt remove eosio
 ```
 #### Centos RPM Package Install
 ```sh
-$ wget https://github.com/eosio/eos/releases/download/v1.8.0-rc1/eosio-1.8.0-rc1.el7.x86_64.rpm
-$ sudo yum install ./eosio-1.8.0-rc1.el7.x86_64.rpm
+$ wget https://github.com/eosio/eos/releases/download/v1.8.0-rc2/eosio-1.8.0-rc2.el7.x86_64.rpm
+$ sudo yum install ./eosio-1.8.0-rc2.el7.x86_64.rpm
 ```
 #### Centos RPM Package Uninstall
 ```sh
@@ -68,10 +68,9 @@ $ sudo yum remove eosio
 
 #### Build Script Uninstall
 
-If you have previously installed EOSIO using build scripts, you have two options (neither impact your data directory by default):
-
-1. `./scripts/eosio_uninstall.sh` - Will uninstall eosio, yet leave dependencies (you can use --full to delete your data directory).
-2. `./scripts/full_uninstaller.sh` - Will uninstall eosio and dependencies (can be forced; see script).
+If you have previously installed EOSIO using build scripts, you may execute `./scripts/eosio_uninstall.sh` to uninstall.
+- Passing `--force` will answer yes to all prompts
+- Passing `--full` will remove data directories (be very careful with this)
 
 ## Supported Operating Systems
 EOSIO currently supports the following operating systems:  
