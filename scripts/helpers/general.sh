@@ -63,23 +63,18 @@ function set_system_vars() {
         export OS_MAJ=$(echo "${OS_VER}" | cut -d'.' -f1)
         export OS_MIN=$(echo "${OS_VER}" | cut -d'.' -f2)
         export OS_PATCH=$(echo "${OS_VER}" | cut -d'.' -f3)
-        export MEM_GIG=$(bc <<< "($(sysctl -in hw.memsize) / 1024000000)")
-        export DISK_INSTALL=$(df -h . | tail -1 | tr -s ' ' | cut -d\  -f1 || cut -d' ' -f1)
-        export blksize=$(df . | head -1 | awk '{print $2}' | cut -d- -f1)
-        export gbfactor=$(( 1073741824 / blksize ))
-        export total_blks=$(df . | tail -1 | awk '{print $2}')
-        export avail_blks=$(df . | tail -1 | awk '{print $4}')
-        export DISK_TOTAL=$((total_blks / gbfactor ))
-        export DISK_AVAIL=$((avail_blks / gbfactor ))
+        export MEM_GIG=$(($(sysctl -in hw.memsize) / 1024 / 1024 /1024))
     else
-        export DISK_INSTALL=$( df -h . | tail -1 | tr -s ' ' | cut -d\  -f1 )
-        export DISK_TOTAL_KB=$( df . | tail -1 | awk '{print $2}' )
-        export DISK_AVAIL_KB=$( df . | tail -1 | awk '{print $4}' )
         export MEM_GIG=$(( ( ( $(cat /proc/meminfo | grep MemTotal | awk '{print $2}') / 1000 ) / 1000 ) ))
-        export DISK_TOTAL=$(( DISK_TOTAL_KB / 1048576 ))
-        export DISK_AVAIL=$(( DISK_AVAIL_KB / 1048576 ))
     fi
-    export JOBS=$(( MEM_GIG > CPU_CORES ? CPU_CORES : MEM_GIG ))
+    local IFS=' '
+    set `df -k . | tail -1`
+    export DISK_INSTALL=$1
+    export DISK_TOTAL=$(($2 / 1024 / 1024))
+    export DISK_AVAIL=$(($4 / 1024 / 1024))
+    # For a basic hueristic here, let's require at least 2GB of available RAM per parallel job.
+    # CPU_CORES is the number of logical cores available.
+    export JOBS=${JOBS:-$(( MEM_GIG / 2 >= CPU_CORES ? CPU_CORES : MEM_GIG / 2 ))}
 }
 
 function install-package() {
@@ -87,9 +82,10 @@ function install-package() {
     EXECUTION_FUNCTION="execute"
     [[ $2 == "WETRUN" ]] && EXECUTION_FUNCTION="execute-always"
     ( [[ $2 =~ "--" ]] || [[ $3 =~ "--" ]] ) && OPTIONS="${2}${3}"
-    [[ $CURRENT_USER != "root" ]] && [[ ! -z $SUDO_LOCATION ]] && SUDO_COMMAND="$SUDO_LOCATION -E"
-    ( [[ $NAME =~ "Amazon Linux" ]] || [[ $NAME == "CentOS Linux" ]] ) && eval $EXECUTION_FUNCTION $SUDO_COMMAND $YUM $OPTIONS install -y $1
-    ( [[ $NAME =~ "Ubuntu" ]] ) && eval $EXECUTION_FUNCTION $SUDO_COMMAND $APTGET $OPTIONS install -y $1
+    # Can't use $SUDO_COMMAND: https://askubuntu.com/questions/953485/where-do-i-find-the-sudo-command-environment-variable
+    [[ $CURRENT_USER != "root" ]] && [[ ! -z $SUDO_LOCATION ]] && NEW_SUDO_COMMAND="$SUDO_LOCATION -E"
+    ( [[ $NAME =~ "Amazon Linux" ]] || [[ $NAME == "CentOS Linux" ]] ) && eval $EXECUTION_FUNCTION $NEW_SUDO_COMMAND $YUM $OPTIONS install -y $1
+    ( [[ $NAME =~ "Ubuntu" ]] ) && eval $EXECUTION_FUNCTION $NEW_SUDO_COMMAND $APTGET $OPTIONS install -y $1
   fi
   true # Required; Weird behavior without it
 }
@@ -101,10 +97,10 @@ function uninstall-package() {
     [[ $2 == "WETRUN" ]] && EXECUTION_FUNCTION="execute-always"
     ( [[ $2 == "autoremove" ]] || [[ $3 == "autoremove" ]] ) && REMOVE="autoremove"
     ( [[ $2 =~ "--" ]] || [[ $3 =~ "--" ]] ) && OPTIONS="${2}${3}"
-    [[ $CURRENT_USER != "root" ]] && [[ ! -z $SUDO_LOCATION ]] && SUDO_COMMAND="$SUDO_LOCATION -E"
+    [[ $CURRENT_USER != "root" ]] && [[ ! -z $SUDO_LOCATION ]] && NEW_SUDO_COMMAND="$SUDO_LOCATION -E"
     # Check if the packages exist before uninstalling them. This speeds things up for tests.
-    ( ( [[ $NAME =~ "Amazon Linux" ]] || [[ $NAME == "CentOS Linux" ]] ) && [[ ! -z $(rpm -qa $1) ]] ) && eval $EXECUTION_FUNCTION $SUDO_COMMAND $YUM $OPTIONS $REMOVE -y $1
-    ( [[ $NAME =~ "Ubuntu" ]] && $(dpkg -s $1 &>/dev/null) ) && eval $EXECUTION_FUNCTION $SUDO_COMMAND $APTGET $OPTIONS $REMOVE -y $1
+    ( ( [[ $NAME =~ "Amazon Linux" ]] || [[ $NAME == "CentOS Linux" ]] ) && [[ ! -z $(rpm -qa $1) ]] ) && eval $EXECUTION_FUNCTION $NEW_SUDO_COMMAND $YUM $OPTIONS $REMOVE -y $1
+    ( [[ $NAME =~ "Ubuntu" ]] && $(dpkg -s $1 &>/dev/null) ) && eval $EXECUTION_FUNCTION $NEW_SUDO_COMMAND $APTGET $OPTIONS $REMOVE -y $1
   fi
   true
 }
@@ -220,10 +216,10 @@ function ensure-yum-packages() {
     # || [[ -n "$testee" ]]; needed to see last line of deps file (https://stackoverflow.com/questions/12916352/shell-script-read-missing-last-line)
     while read -r testee tester || [[ -n "$testee" ]]; do
         if [[ ! -z $(eval $tester $testee) ]]; then
-            echo " - ${testee} ${COLOR_GREEN}found!${COLOR_NC}"
+            echo " - ${testee} ${COLOR_GREEN}ok${COLOR_NC}"
         else
             DEPS=$DEPS"${testee} "
-            echo " - ${testee} ${COLOR_RED}NOT${COLOR_NC} found."
+            echo " - ${testee} ${COLOR_RED}NOT${COLOR_NC} found!"
             (( COUNT+=1 ))
         fi
     done < $DEPS_FILE
@@ -269,18 +265,18 @@ function ensure-brew-packages() {
     # || [[ -n "$nmae" ]]; needed to see last line of deps file (https://stackoverflow.com/questions/12916352/shell-script-read-missing-last-line)
     while read -r name path || [[ -n "$name" ]]; do
         if [[ -f $path ]] || [[ -d $path ]]; then
-            echo " - ${name} ${COLOR_GREEN}found!${COLOR_NC}"
+            echo " - ${name} ${COLOR_GREEN}ok${COLOR_NC}"
             continue
         fi
         # resolve conflict with homebrew glibtool and apple/gnu installs of libtool
         if [[ "${testee}" == "/usr/local/bin/glibtool" ]]; then
             if [ "${tester}" "/usr/local/bin/libtool" ]; then
-                echo " - ${name} ${COLOR_GREEN}found!${COLOR_NC}"
+                echo " - ${name} ${COLOR_GREEN}ok${COLOR_NC}"
                 continue
             fi
         fi
         DEPS=$DEPS"${name} "
-        echo " - ${name} ${COLOR_RED}NOT${COLOR_NC} found."
+        echo " - ${name} ${COLOR_RED}NOT${COLOR_NC} found!"
         (( COUNT+=1 ))
     done < $DEPS_FILE
     if [[ $COUNT > 0 ]]; then
@@ -348,10 +344,10 @@ function ensure-apt-packages() {
     # || [[ -n "$testee" ]]; needed to see last line of deps file (https://stackoverflow.com/questions/12916352/shell-script-read-missing-last-line)
     while read -r testee tester || [[ -n "$testee" ]]; do
         if [[ ! -z $(eval $tester $testee 2>/dev/null) ]]; then
-            echo " - ${testee} ${COLOR_GREEN}found!${COLOR_NC}"
+            echo " - ${testee} ${COLOR_GREEN}ok${COLOR_NC}"
         else
             DEPS=$DEPS"${testee} "
-            echo " - ${testee} ${COLOR_RED}NOT${COLOR_NC} found."
+            echo " - ${testee} ${COLOR_RED}NOT${COLOR_NC} found!"
             (( COUNT+=1 ))
         fi
     done < $DEPS_FILE

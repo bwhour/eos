@@ -14,12 +14,7 @@ from testUtils import Account
 from testUtils import EnumType
 from testUtils import addEnum
 from testUtils import unhandledEnumType
-
-class ReturnType(EnumType):
-    pass
-
-addEnum(ReturnType, "raw")
-addEnum(ReturnType, "json")
+from testUtils import ReturnType
 
 class BlockType(EnumType):
     pass
@@ -49,6 +44,7 @@ class Node(object):
         self.infoValid=None
         self.lastRetrievedHeadBlockNum=None
         self.lastRetrievedLIB=None
+        self.lastRetrievedHeadBlockProducer=""
         self.transCache={}
         self.walletMgr=walletMgr
         self.missingTransaction=False
@@ -170,6 +166,7 @@ class Node(object):
         tmpStr=re.sub(r'ObjectId\("(\w+)"\)', r'"ObjectId-\1"', tmpStr)
         tmpStr=re.sub(r'ISODate\("([\w|\-|\:|\.]+)"\)', r'"ISODate-\1"', tmpStr)
         tmpStr=re.sub(r'NumberLong\("(\w+)"\)', r'"NumberLong-\1"', tmpStr)
+        tmpStr=re.sub(r'NumberLong\((\w+)\)', r'\1', tmpStr)
         return tmpStr
 
     @staticmethod
@@ -328,8 +325,8 @@ class Node(object):
         present = True if blockNum <= node_block_num else False
         if Utils.Debug and blockType==BlockType.lib:
             decorator=""
-            if present:
-                decorator="is not "
+            if not present:
+                decorator="not "
             Utils.Print("Block %d is %sfinalized." % (blockNum, decorator))
 
         return present
@@ -924,7 +921,7 @@ class Node(object):
             if not shouldFail:
                 end=time.perf_counter()
                 msg=ex.output.decode("utf-8")
-                Utils.Print("ERROR: Exception during code hash retrieval.  cmd Duration: %.3f sec.  %s" % (end-start, msg))
+                Utils.Print("ERROR: Exception during set contract.  cmd Duration: %.3f sec.  %s" % (end-start, msg))
                 return None
             else:
                 retMap={}
@@ -1173,6 +1170,7 @@ class Node(object):
             self.infoValid=True
             self.lastRetrievedHeadBlockNum=int(info["head_block_num"])
             self.lastRetrievedLIB=int(info["last_irreversible_block_num"])
+            self.lastRetrievedHeadBlockProducer=info["head_block_producer"]
         return info
 
     def getBlockFromDb(self, idx):
@@ -1205,6 +1203,7 @@ class Node(object):
                 return info[headBlockNumTag]
         else:
             # Either this implementation or the one in getIrreversibleBlockNum are likely wrong.
+            time.sleep(1)
             block=self.getBlockFromDb(-1)
             if block is not None:
                 blockNum=block["block_num"]
@@ -1215,6 +1214,7 @@ class Node(object):
         if not self.enableMongo:
             info=self.getInfo(exitOnError=True)
             if info is not None:
+                Utils.Print("current lib: %d" % (info["last_irreversible_block_num"]))
                 return info["last_irreversible_block_num"]
         else:
             # Either this implementation or the one in getHeadBlockNum are likely wrong.
@@ -1263,7 +1263,7 @@ class Node(object):
         self.killed=True
         return True
 
-    def interruptAndVerifyExitStatus(self, timeout=15):
+    def interruptAndVerifyExitStatus(self, timeout=60):
         if Utils.Debug: Utils.Print("terminating node: %s" % (self.cmd))
         assert self.popenProc is not None, "node: \"%s\" does not have a popenProc, this may be because it is only set after a relaunch." % (self.cmd)
         self.popenProc.send_signal(signal.SIGINT)
@@ -1278,7 +1278,9 @@ class Node(object):
         self.killed=True
 
     def verifyAlive(self, silent=False):
-        if not silent and Utils.Debug: Utils.Print("Checking if node(pid=%s) is alive(killed=%s): %s" % (self.pid, self.killed, self.cmd))
+        logStatus=not silent and Utils.Debug
+        pid=self.pid
+        if logStatus: Utils.Print("Checking if node(pid=%s) is alive(killed=%s): %s" % (self.pid, self.killed, self.cmd))
         if self.killed or self.pid is None:
             self.killed=True
             self.pid=None
@@ -1290,35 +1292,45 @@ class Node(object):
             # mark node as killed
             self.pid=None
             self.killed=True
+            if logStatus: Utils.Print("Determined node(formerly pid=%s) is killed" % (pid))
             return False
         except PermissionError as ex:
+            if logStatus: Utils.Print("Determined node(formerly pid=%s) is alive" % (pid))
             return True
 
+        if logStatus: Utils.Print("Determined node(pid=%s) is alive" % (self.pid))
         return True
+
+    @staticmethod
+    def getBlockAttribute(block, key, blockNum, exitOnError=True):
+        value=block[key]
+
+        if value is None and exitOnError:
+            blockNumStr=" for block number %s" % (blockNum)
+            blockStr=" with block content:\n%s" % (json.dumps(block, indent=4, sort_keys=True))
+            Utils.cmdError("could not get %s%s%s" % (key, blockNumStr, blockStr))
+            Utils.errorExit("Failed to get block's %s" % (key))
+
+        return value
 
     def getBlockProducerByNum(self, blockNum, timeout=None, waitForBlock=True, exitOnError=True):
         if waitForBlock:
             self.waitForBlock(blockNum, timeout=timeout, blockType=BlockType.head)
         block=self.getBlock(blockNum, exitOnError=exitOnError)
-        blockProducer=block["producer"]
-        if blockProducer is None and exitOnError:
-            Utils.cmdError("could not get producer for block number %s" % (blockNum))
-            Utils.errorExit("Failed to get block's producer")
-        return blockProducer
+        return Node.getBlockAttribute(block, "producer", blockNum, exitOnError=exitOnError)
 
     def getBlockProducer(self, timeout=None, waitForBlock=True, exitOnError=True, blockType=BlockType.head):
         blockNum=self.getBlockNum(blockType=blockType)
         block=self.getBlock(blockNum, exitOnError=exitOnError, blockType=blockType)
-        blockProducer=block["producer"]
-        if blockProducer is None and exitOnError:
-            Utils.cmdError("could not get producer for block number %s" % (blockNum))
-            Utils.errorExit("Failed to get block's producer")
-        return blockProducer
+        return Node.getBlockAttribute(block, "producer", blockNum, exitOnError=exitOnError)
 
     def getNextCleanProductionCycle(self, trans):
-        transId=Node.getTransId(trans)
         rounds=21*12*2  # max time to ensure that at least 2/3+1 of producers x blocks per producer x at least 2 times
-        self.waitForTransFinalization(transId, timeout=rounds/2)
+        if trans is not None:
+            transId=Node.getTransId(trans)
+            self.waitForTransFinalization(transId, timeout=rounds/2)
+        else:
+            transId="Null"
         irreversibleBlockNum=self.getIrreversibleBlockNum()
 
         # The voted schedule should be promoted now, then need to wait for that to become irreversible
@@ -1343,7 +1355,7 @@ class Node(object):
     # TBD: make nodeId an internal property
     # pylint: disable=too-many-locals
     # If nodeosPath is equal to None, it will use the existing nodeos path
-    def relaunch(self, nodeId, chainArg=None, newChain=False, timeout=Utils.systemWaitTimeout, addOrSwapFlags=None, cachePopen=False, nodeosPath=None):
+    def relaunch(self, nodeId, chainArg=None, newChain=False, timeout=Utils.systemWaitTimeout, addSwapFlags=None, cachePopen=False, nodeosPath=None):
 
         assert(self.pid is None)
         assert(self.killed)
@@ -1355,7 +1367,7 @@ class Node(object):
         splittedCmd=self.cmd.split()
         if nodeosPath: splittedCmd[0] = nodeosPath
         myCmd=" ".join(splittedCmd)
-        toAddOrSwap=copy.deepcopy(addOrSwapFlags) if addOrSwapFlags is not None else {}
+        toAddOrSwap=copy.deepcopy(addSwapFlags) if addSwapFlags is not None else {}
         if not newChain:
             skip=False
             swapValue=None
@@ -1519,7 +1531,7 @@ class Node(object):
         self.scheduleProtocolFeatureActivations([preactivateFeatureDigest])
 
         # Wait for the next block to be produced so the scheduled protocol feature is activated
-        self.waitForHeadToAdvance()
+        assert self.waitForHeadToAdvance(), print("ERROR: TIMEOUT WAITING FOR PREACTIVATE")
 
     # Return an array of feature digests to be preactivated in a correct order respecting dependencies
     # Require producer_api_plugin
@@ -1573,3 +1585,8 @@ class Node(object):
         protocolFeatureJson["subjective_restrictions"].update(subjectiveRestriction)
         with open(jsonPath, "w") as f:
             json.dump(protocolFeatureJson, f, indent=2)
+
+    # Require producer_api_plugin
+    def createSnapshot(self):
+        param = { }
+        return self.processCurlCmd("producer", "create_snapshot", json.dumps(param))

@@ -1,7 +1,3 @@
-/**
- *  @file
- *  @copyright defined in eos/LICENSE
- */
 #include <eosiolib/eosio.hpp>
 #include <eosiolib/transaction.hpp>
 
@@ -92,6 +88,7 @@ extern "C" {
 
       //test crypto
       WASM_TEST_HANDLER( test_crypto, test_recover_key              );
+      WASM_TEST_HANDLER( test_crypto, test_recover_key_partial      );
       WASM_TEST_HANDLER( test_crypto, test_recover_key_assert_true  );
       WASM_TEST_HANDLER( test_crypto, test_recover_key_assert_false );
       WASM_TEST_HANDLER( test_crypto, test_sha1                     );
@@ -119,6 +116,7 @@ extern "C" {
       WASM_TEST_HANDLER   ( test_transaction, send_action_inline_fail                );
       WASM_TEST_HANDLER   ( test_transaction, send_action_empty                      );
       WASM_TEST_HANDLER   ( test_transaction, send_action_large                      );
+      WASM_TEST_HANDLER   ( test_transaction, send_action_4k                         );
       WASM_TEST_HANDLER   ( test_transaction, send_action_recurse                    );
       WASM_TEST_HANDLER   ( test_transaction, test_read_transaction                  );
       WASM_TEST_HANDLER   ( test_transaction, test_transaction_size                  );
@@ -129,6 +127,7 @@ extern "C" {
       WASM_TEST_HANDLER_EX( test_transaction, send_action_sender                     );
       WASM_TEST_HANDLER   ( test_transaction, deferred_print                         );
       WASM_TEST_HANDLER_EX( test_transaction, send_deferred_transaction              );
+      WASM_TEST_HANDLER_EX( test_transaction, send_deferred_transaction_4k_action    );
       WASM_TEST_HANDLER_EX( test_transaction, send_deferred_transaction_replace      );
       WASM_TEST_HANDLER   ( test_transaction, send_deferred_tx_with_dtt_action       );
       WASM_TEST_HANDLER   ( test_transaction, cancel_deferred_transaction_success    );
@@ -163,7 +162,7 @@ extern "C" {
       WASM_TEST_HANDLER_EX( test_permission, test_account_creation_time );
 
       //unhandled test call
-      eosio_assert( false, "Unknown Test" );
+      eosio_assert( false, "Unknown Test ahhh!" );
 
    }
 }

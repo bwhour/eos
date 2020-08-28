@@ -12,8 +12,9 @@ import re
 
 ###############################################################
 # nodeos_run_test
-# --dump-error-details <Upon error print etc/eosio/node_*/config.ini and var/lib/node_*/stderr.log to stdout>
-# --keep-logs <Don't delete var/lib/node_* folders upon test completion>
+#
+# General test that tests a wide range of general use actions around nodeos and keosd
+#
 ###############################################################
 
 Print=Utils.Print
@@ -244,7 +245,7 @@ try:
         cmdError("FAILURE - transfer failed")
         errorExit("Transfer verification failed. Excepted %s, actual: %s" % (expectedAmount, actualAmount))
 
-    Print("Validating accounts after some user trasactions")
+    Print("Validating accounts after some user transactions")
     accounts=[testeraAccount, currencyAccount, exchangeAccount]
     cluster.validateAccounts(accounts)
 
@@ -649,7 +650,7 @@ try:
         rawAccount=node.getEosAccount(defproduceraAccount.name, exitOnError=True, returnType=ReturnType.raw)
         coreLiquidBalance=account['core_liquid_balance']
         match=re.search(r'\bliquid:\s*%s\s' % (coreLiquidBalance), rawAccount, re.MULTILINE | re.DOTALL)
-        assert match is not None, "did not find the core liquid balance (\"liquid:\") of %d in \"%s\"" % (coreLiquidBalance, rawAccount)
+        assert match is not None, "did not find the core liquid balance (\"liquid:\") of {} in \"{}\"".format(coreLiquidBalance, rawAccount)
 
     Print("Get head block num.")
     currentBlockNum=node.getHeadBlockNum()

@@ -1,8 +1,3 @@
-/**
- *  @file
- *  @copyright defined in eos/LICENSE
- */
-
 #include <eosio/chain/config.hpp>
 #include <eosio/state_history_plugin/state_history_log.hpp>
 #include <eosio/state_history_plugin/state_history_serialization.hpp>
@@ -99,7 +94,7 @@ bool include_delta(const eosio::chain::resource_limits::resource_limits_state_ob
 bool include_delta(const eosio::chain::account_metadata_object& old,
                    const eosio::chain::account_metadata_object& curr) {
    return                                               //
-       old.name.value != curr.name.value ||             //
+       old.name != curr.name ||                         //
        old.is_privileged() != curr.is_privileged() ||   //
        old.last_code_update != curr.last_code_update || //
        old.vm_type != curr.vm_type ||                   //
@@ -122,6 +117,7 @@ struct state_history_plugin_impl : std::enable_shared_from_this<state_history_pl
    bool                                                       trace_debug_mode = false;
    bool                                                       stopping = false;
    fc::optional<scoped_connection>                            applied_transaction_connection;
+   fc::optional<scoped_connection>                            block_start_connection;
    fc::optional<scoped_connection>                            accepted_block_connection;
    string                                                     endpoint_address = "0.0.0.0";
    uint16_t                                                   endpoint_port    = 8080;
@@ -186,10 +182,10 @@ struct state_history_plugin_impl : std::enable_shared_from_this<state_history_pl
          socket_stream->next_layer().set_option(boost::asio::ip::tcp::no_delay(true));
          socket_stream->next_layer().set_option(boost::asio::socket_base::send_buffer_size(1024 * 1024));
          socket_stream->next_layer().set_option(boost::asio::socket_base::receive_buffer_size(1024 * 1024));
-         socket_stream->async_accept([self = shared_from_this(), this](boost::system::error_code ec) {
-            callback(ec, "async_accept", [&] {
-               start_read();
-               send(state_history_plugin_abi);
+         socket_stream->async_accept([self = shared_from_this()](boost::system::error_code ec) {
+            self->callback(ec, "async_accept", [self] {
+               self->start_read();
+               self->send(state_history_plugin_abi);
             });
          });
       }
@@ -197,15 +193,15 @@ struct state_history_plugin_impl : std::enable_shared_from_this<state_history_pl
       void start_read() {
          auto in_buffer = std::make_shared<boost::beast::flat_buffer>();
          socket_stream->async_read(
-             *in_buffer, [self = shared_from_this(), this, in_buffer](boost::system::error_code ec, size_t) {
-                callback(ec, "async_read", [&] {
+             *in_buffer, [self = shared_from_this(), in_buffer](boost::system::error_code ec, size_t) {
+                self->callback(ec, "async_read", [self, in_buffer] {
                    auto d = boost::asio::buffer_cast<char const*>(boost::beast::buffers_front(in_buffer->data()));
                    auto s = boost::asio::buffer_size(in_buffer->data());
                    fc::datastream<const char*> ds(d, s);
                    state_request               req;
                    fc::raw::unpack(ds, req);
-                   req.visit(*this);
-                   start_read();
+                   req.visit(*self);
+                   self->start_read();
                 });
              });
       }
@@ -231,11 +227,11 @@ struct state_history_plugin_impl : std::enable_shared_from_this<state_history_pl
          sent_abi = true;
          socket_stream->async_write( //
              boost::asio::buffer(send_queue[0]),
-             [self = shared_from_this(), this](boost::system::error_code ec, size_t) {
-                callback(ec, "async_write", [&] {
-                   send_queue.erase(send_queue.begin());
-                   sending = false;
-                   send();
+             [self = shared_from_this()](boost::system::error_code ec, size_t) {
+                self->callback(ec, "async_write", [self] {
+                   self->send_queue.erase(self->send_queue.begin());
+                   self->sending = false;
+                   self->send();
                 });
              });
       }
@@ -277,18 +273,14 @@ struct state_history_plugin_impl : std::enable_shared_from_this<state_history_pl
          send_update();
       }
 
-      void send_update(bool changed = false) {
-         if (changed)
-            need_to_send_update = true;
-         if (!send_queue.empty() || !need_to_send_update || !current_request ||
-             !current_request->max_messages_in_flight)
+      void send_update(get_blocks_result_v0 result) {
+         need_to_send_update = true;
+         if (!send_queue.empty() || !current_request || !current_request->max_messages_in_flight)
             return;
-         auto&                chain = plugin->chain_plug->chain();
-         get_blocks_result_v0 result;
-         result.head              = {chain.head_block_num(), chain.head_block_id()};
+         auto& chain = plugin->chain_plug->chain();
          result.last_irreversible = {chain.last_irreversible_block_num(), chain.last_irreversible_block_id()};
          uint32_t current =
-             current_request->irreversible_only ? result.last_irreversible.block_num : result.head.block_num;
+               current_request->irreversible_only ? result.last_irreversible.block_num : result.head.block_num;
          if (current_request->start_block_num <= current &&
              current_request->start_block_num < current_request->end_block_num) {
             auto block_id = plugin->get_block_id(current_request->start_block_num);
@@ -312,6 +304,27 @@ struct state_history_plugin_impl : std::enable_shared_from_this<state_history_pl
                                current_request->start_block_num < current_request->end_block_num;
       }
 
+      void send_update(const block_state_ptr& block_state) {
+         need_to_send_update = true;
+         if (!send_queue.empty() || !current_request || !current_request->max_messages_in_flight)
+            return;
+         get_blocks_result_v0 result;
+         result.head = {block_state->block_num, block_state->id};
+         send_update(std::move(result));
+      }
+
+      void send_update(bool changed = false) {
+         if (changed)
+            need_to_send_update = true;
+         if (!send_queue.empty() || !need_to_send_update || !current_request ||
+             !current_request->max_messages_in_flight)
+            return;
+         auto& chain = plugin->chain_plug->chain();
+         get_blocks_result_v0 result;
+         result.head = {chain.head_block_num(), chain.head_block_id()};
+         send_update(std::move(result));
+      }
+
       template <typename F>
       void catch_and_close(F f) {
          try {
@@ -330,11 +343,13 @@ struct state_history_plugin_impl : std::enable_shared_from_this<state_history_pl
 
       template <typename F>
       void callback(boost::system::error_code ec, const char* what, F f) {
-         if (plugin->stopping)
-            return;
-         if (ec)
-            return on_fail(ec, what);
-         catch_and_close(f);
+         app().post( priority::medium, [=]() {
+            if( plugin->stopping )
+               return;
+            if( ec )
+               return on_fail( ec, what );
+            catch_and_close( f );
+         } );
       }
 
       void on_fail(boost::system::error_code ec, const char* what) {
@@ -396,21 +411,9 @@ struct state_history_plugin_impl : std::enable_shared_from_this<state_history_pl
       });
    }
 
-   static bool is_onblock(const transaction_trace_ptr& p) {
-      if (p->action_traces.size() != 1)
-         return false;
-      auto& act = p->action_traces[0].act;
-      if (act.account != eosio::chain::config::system_account_name || act.name != N(onblock) ||
-          act.authorization.size() != 1)
-         return false;
-      auto& auth = act.authorization[0];
-      return auth.actor == eosio::chain::config::system_account_name &&
-             auth.permission == eosio::chain::config::active_name;
-   }
-
    void on_applied_transaction(const transaction_trace_ptr& p, const signed_transaction& t) {
       if (p->receipt && trace_log) {
-         if (is_onblock(p))
+         if (chain::is_onblock(*p))
             onblock_trace.emplace(p, t);
          else if (p->failed_dtrx_trace)
             cached_traces[p->failed_dtrx_trace->id] = augmented_transaction_trace{p, t};
@@ -427,9 +430,18 @@ struct state_history_plugin_impl : std::enable_shared_from_this<state_history_pl
          if (p) {
             if (p->current_request && block_state->block_num < p->current_request->start_block_num)
                p->current_request->start_block_num = block_state->block_num;
-            p->send_update(true);
+            p->send_update(block_state);
          }
       }
+   }
+
+   void on_block_start(uint32_t block_num) {
+      clear_caches();
+   }
+
+   void clear_caches() {
+      cached_traces.clear();
+      onblock_trace.reset();
    }
 
    void store_traces(const block_state_ptr& block_state) {
@@ -449,8 +461,7 @@ struct state_history_plugin_impl : std::enable_shared_from_this<state_history_pl
                     "missing trace for transaction ${id}", ("id", id));
          traces.push_back(it->second);
       }
-      cached_traces.clear();
-      onblock_trace.reset();
+      clear_caches();
 
       auto& db         = chain_plug->chain().db();
       auto  traces_bin = zlib_compress_bytes(fc::raw::pack(make_history_context_wrapper(db, trace_debug_mode, traces)));
@@ -600,6 +611,8 @@ void state_history_plugin::plugin_initialize(const variables_map& options) {
           }));
       my->accepted_block_connection.emplace(
           chain.accepted_block.connect([&](const block_state_ptr& p) { my->on_accepted_block(p); }));
+      my->block_start_connection.emplace(
+          chain.block_start.connect([&](uint32_t block_num) { my->on_block_start(block_num); }));
 
       auto                    dir_option = options.at("state-history-dir").as<bfs::path>();
       boost::filesystem::path state_history_dir;
@@ -640,6 +653,7 @@ void state_history_plugin::plugin_startup() { my->listen(); }
 void state_history_plugin::plugin_shutdown() {
    my->applied_transaction_connection.reset();
    my->accepted_block_connection.reset();
+   my->block_start_connection.reset();
    while (!my->sessions.empty())
       my->sessions.begin()->second->close();
    my->stopping = true;

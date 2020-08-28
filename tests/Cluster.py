@@ -15,6 +15,7 @@ import json
 from core_symbol import CORE_SYMBOL
 from testUtils import Utils
 from testUtils import Account
+from testUtils import BlockLogAction
 from Node import BlockType
 from Node import Node
 from WalletMgr import WalletMgr
@@ -143,7 +144,7 @@ class Cluster(object):
     # pylint: disable=too-many-branches
     # pylint: disable=too-many-statements
     def launch(self, pnodes=1, unstartedNodes=0, totalNodes=1, prodCount=1, topo="mesh", delay=1, onlyBios=False, dontBootstrap=False,
-               totalProducers=None, extraNodeosArgs=None, useBiosBootFile=True, specificExtraNodeosArgs=None, onlySetProds=False,
+               totalProducers=None, sharedProducers=0, extraNodeosArgs=" --http-max-response-time-ms 990000 ", useBiosBootFile=True, specificExtraNodeosArgs=None, onlySetProds=False,
                pfSetupPolicy=PFSetupPolicy.FULL, alternateVersionLabelsFile=None, associatedNodeLabels=None, loadSystemContract=True):
         """Launch cluster.
         pnodes: producer nodes count
@@ -198,6 +199,9 @@ class Cluster(object):
         if totalProducers:
             assert(isinstance(totalProducers, (str,int)))
             producerFlag="--producers %s" % (totalProducers)
+
+        if sharedProducers > 0:
+            producerFlag += (" --shared-producers %d" % (sharedProducers))
 
         self.setAlternateVersionLabels(alternateVersionLabelsFile)
 
@@ -383,7 +387,7 @@ class Cluster(object):
 
         Cluster.__LauncherCmdArr = cmdArr.copy()
 
-        s=" ".join(cmdArr)
+        s=" ".join([("'{0}'".format(element) if (' ' in element) else element) for element in cmdArr.copy()])
         if Utils.Debug: Utils.Print("cmd: %s" % (s))
         if 0 != subprocess.call(cmdArr):
             Utils.Print("ERROR: Launcher failed to launch. failed cmd: %s" % (s))
@@ -430,7 +434,7 @@ class Cluster(object):
         if not loadSystemContract:
             useBiosBootFile=False  #ensure we use Cluster.bootstrap
         if onlyBios or not useBiosBootFile:
-            self.biosNode=self.bootstrap(biosNode, startedNodes, prodCount, totalProducers, pfSetupPolicy, onlyBios, onlySetProds, loadSystemContract)
+            self.biosNode=self.bootstrap(biosNode, startedNodes, prodCount + sharedProducers, totalProducers, pfSetupPolicy, onlyBios, onlySetProds, loadSystemContract)
             if self.biosNode is None:
                 Utils.Print("ERROR: Bootstrap failed.")
                 return False
@@ -947,10 +951,11 @@ class Cluster(object):
         if Utils.Debug: Utils.Print("cmd: %s" % (cmd))
         env = {
             "BIOS_CONTRACT_PATH": "unittests/contracts/old_versions/v1.6.0-rc3/eosio.bios",
+            "BIOS_CURRENCY_SYMBOL": CORE_SYMBOL,
             "FEATURE_DIGESTS": ""
         }
         if PFSetupPolicy.hasPreactivateFeature(pfSetupPolicy):
-            env["BIOS_CONTRACT_PATH"] = "unittests/contracts/eosio.bios"
+            env["BIOS_CONTRACT_PATH"] = "unittests/contracts/old_versions/v1.7.0-develop-preactivate_feature/eosio.bios"
 
         if pfSetupPolicy == PFSetupPolicy.FULL:
             allBuiltinProtocolFeatureDigests = biosNode.getAllBuiltinFeatureDigestsToPreactivate()
@@ -961,7 +966,7 @@ class Cluster(object):
             if not silent: Utils.Print("Launcher failed to shut down eos cluster.")
             return None
 
-        p = re.compile('error', re.IGNORECASE)
+        p = re.compile(r"\berror\b", re.IGNORECASE)
         with open(Cluster.__bootlog) as bootFile:
             for line in bootFile:
                 if p.search(line):
@@ -1068,7 +1073,7 @@ class Cluster(object):
         contract="eosio.bios"
         contractDir="unittests/contracts/%s" % (contract)
         if PFSetupPolicy.hasPreactivateFeature(pfSetupPolicy):
-            contractDir="unittests/contracts/%s" % (contract)
+            contractDir="unittests/contracts/old_versions/v1.7.0-develop-preactivate_feature/%s" % (contract)
         else:
             contractDir="unittests/contracts/old_versions/v1.6.0-rc3/%s" % (contract)
         wasmFile="%s.wasm" % (contract)
@@ -1286,10 +1291,14 @@ class Cluster(object):
         if not biosNode.waitForTransInBlock(transId):
             Utils.Print("ERROR: Failed to validate transaction %s got rolled into a block on server port %d." % (transId, biosNode.port))
             return None
-        action="init"
-        data="{\"version\":0,\"core\":\"4,%s\"}" % (CORE_SYMBOL)
-        opts="--permission %s@active" % (eosioAccount.name)
-        trans=biosNode.pushMessage(eosioAccount.name, action, data, opts)
+
+        # Only call init if the system contract is loaded
+        if loadSystemContract:
+            action="init"
+            data="{\"version\":0,\"core\":\"4,%s\"}" % (CORE_SYMBOL)
+            opts="--permission %s@active" % (eosioAccount.name)
+            trans=biosNode.pushMessage(eosioAccount.name, action, data, opts)
+
         Utils.Print("Cluster bootstrap done.")
 
         return biosNode
@@ -1599,9 +1608,9 @@ class Cluster(object):
 
         self.printBlockLog()
 
-    def getBlockLog(self, nodeExtension):
+    def getBlockLog(self, nodeExtension, blockLogAction=BlockLogAction.return_blocks, outputFile=None, first=None, last=None, throwException=False, silentErrors=False, exitOnError=False):
         blockLogDir=Utils.getNodeDataDir(nodeExtension, "blocks")
-        return Utils.getBlockLog(blockLogDir, exitOnError=False)
+        return Utils.getBlockLog(blockLogDir, blockLogAction=blockLogAction, outputFile=outputFile, first=first, last=last,  throwException=throwException, silentErrors=silentErrors, exitOnError=exitOnError)
 
     def printBlockLog(self):
         blockLogBios=self.getBlockLog("bios")
